@@ -3,5 +3,5 @@
 
 void model_init(model_t *pmodel) {
     assert(pmodel != NULL);
-    pmodel->id = 0;
+    pmodel->id = 1;
 }

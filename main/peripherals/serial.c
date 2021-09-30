@@ -7,6 +7,8 @@
 #include <sys/types.h>
 #include <assert.h>
 #include <string.h>
+#include "utils/utils.h"
+#include "gel/timer/timecheck.h"
 #include "peripherals/digin.h"
 #include "peripherals/digout.h"
 #include "peripherals/storage.h"
@@ -14,14 +16,21 @@
 
 #define PORTNUM 1
 // Timeout threshold for UART = number of symbols (~10 tics) with unchanged state on receive pin
-#define ECHO_READ_TOUT (3)     // 3.5T * 8 = 28 ticks, TOUT=3 -> ~24..33 ticks
-#define HEADER_LENGTH  15
+#define ECHO_READ_TOUT   (3)     // 3.5T * 8 = 28 ticks, TOUT=3 -> ~24..33 ticks
+#define HEADER_LENGTH    15
+#define UART_BUFFER_SIZE 1024
 
 
-static int     serial_parse_command(uint8_t *buffer, size_t len, serial_packet_t *packet);
-static int     serial_build_response(uint8_t *buffer, size_t len, uint32_t dest, uint32_t source, uint8_t *data,
-                                     size_t datalen);
+static int           serial_parse_command(uint8_t *buffer, size_t len, serial_packet_t *packet, size_t *toflush);
+static int           serial_build_response(uint8_t *buffer, size_t len, uint32_t dest, uint32_t source, uint8_t *data,
+                                           size_t datalen);
+static uint8_t       packet_buffer[UART_BUFFER_SIZE] = {0};
+static size_t        packet_index                    = 0;
+static unsigned long timestamp                       = 0;
+
 static uint8_t crc_calc(uint8_t *buffer, size_t len);
+static int     find_preamble(uint8_t *buffer, size_t len);
+
 
 
 static const char *TAG = "Serial";
@@ -49,13 +58,48 @@ void serial_init(void) {
 
 
 int serial_get_packet(serial_packet_t *packet) {
-    uint8_t buffer[SERIAL_PACKET_MAX_LENGTH] = {0};
-    int     len = uart_read_bytes(PORTNUM, buffer, SERIAL_PACKET_MAX_LENGTH, pdMS_TO_TICKS(2));
-    if (len > 0) {
-        return serial_parse_command(buffer, len, packet);
-    } else {
-        return SERIAL_ERROR_NO_BYTES;
+    size_t available = 0;
+    if (packet_index > 0 && is_expired(timestamp, get_millis(), 10)) {
+        ESP_LOGW(TAG, "Timeout");
+        ESP_LOG_BUFFER_HEX(TAG, packet_buffer, packet_index);
+        packet_index = 0;
     }
+
+    uart_get_buffered_data_len(PORTNUM, &available);
+
+    if (available == 0 && packet_index == 0) {
+        vTaskDelay(1);
+        return SERIAL_INCOMPLETE;
+    } else if (available > 0) {
+        timestamp = get_millis();
+
+        if (packet_index + available > sizeof(packet_buffer)) {
+            ESP_LOGW(TAG, "Overflow!");
+            packet_index = 0;
+            return SERIAL_INCOMPLETE;
+        }
+
+        int len = uart_read_bytes(PORTNUM, &packet_buffer[packet_index], available, 0);
+        assert(len > 0);
+        packet_index += len;
+    }
+
+    size_t toflush = 0;
+    int    res     = serial_parse_command(packet_buffer, packet_index, packet, &toflush);
+    //printf("%zu %zu %zu %i\n", available, packet_index, toflush, res);
+
+    if (toflush > 0) {
+        memmove(packet_buffer, &packet_buffer[toflush], packet_index - toflush);
+        packet_index -= toflush;
+    }
+
+    return res;
+}
+
+
+void serial_flush(void) {
+    timestamp = get_millis();
+    uart_flush(PORTNUM);
 }
 
 
@@ -64,39 +108,49 @@ void serial_send_response(serial_packet_t *packet, uint8_t *data, size_t len) {
     size_t  response_len =
         serial_build_response(response, SERIAL_PACKET_MAX_LENGTH, packet->source, packet->dest, data, len);
     uart_write_bytes(PORTNUM, response, response_len);
-    ESP_LOGI(TAG, "Sent %zu bytes in response", response_len);
-    ESP_LOG_BUFFER_HEX("Special", response, response_len);
+    ESP_LOGV(TAG, "Sent %zu bytes in response", response_len);
 }
 
 
-static int serial_parse_command(uint8_t *buffer, size_t len, serial_packet_t *packet) {
-    if (len < HEADER_LENGTH) {     // lunghezza pacchetto troppo corta
-        ESP_LOG_BUFFER_HEX(TAG, buffer, len);
-        return SERIAL_ERROR_TOO_FEW_BYTES;
+static serial_error_t serial_parse_command(uint8_t *buffer, size_t len, serial_packet_t *packet, size_t *toflush) {
+    if (len < 2) {
+        *toflush = 0;
+        return SERIAL_INCOMPLETE;
     }
 
-    size_t expected_length = (size_t)buffer[2];
+    int start = find_preamble(buffer, len);
 
-    if (buffer[0] != 2) {     // primo byte errato
-        ESP_LOG_BUFFER_HEX(TAG, buffer, len);
+    if (start < 0) {
+        *toflush = len;
         return SERIAL_ERROR_WRONG_PREAMBLE;
-    } else if (buffer[1] != 1) {     // secondo byte errato
-        ESP_LOG_BUFFER_HEX(TAG, buffer, len);
-        return SERIAL_ERROR_WRONG_PREAMBLE;
-    } else if (expected_length > len) {     // lunghezza errata
-        ESP_LOGW(TAG, "Packet says %zu bytes but only received %zu", expected_length, len);
-        return -3;
-    } else if (crc_calc(buffer, expected_length) == buffer[expected_length - 1]) {     // crc corretto
-        packet->dest    = buffer[4] << 24 | buffer[5] << 16 | buffer[6] << 8 | buffer[7];
-        packet->source  = buffer[8] << 24 | buffer[9] << 16 | buffer[10] << 8 | buffer[11];
-        packet->command = (buffer[12] << 8) | buffer[13];
-        memcpy(packet->data, &buffer[14], expected_length - HEADER_LENGTH);
+    } else {
+        *toflush = (size_t)start;
+    }
+
+    size_t remaining_length = len - start;
+
+    if (remaining_length < HEADER_LENGTH) {     // lunghezza pacchetto troppo corta
+        return SERIAL_INCOMPLETE;
+    }
+
+    size_t expected_length = (size_t)buffer[start + 2];
+
+    if (expected_length > remaining_length) {     // lunghezza errata
+        return SERIAL_INCOMPLETE;
+    } else if (crc_calc(&buffer[start], expected_length) == buffer[start + expected_length - 1]) {     // crc corretto
+        packet->dest = buffer[start + 4] << 24 | buffer[start + 5] << 16 | buffer[start + 6] << 8 | buffer[start + 7];
+        packet->source =
+            buffer[start + 8] << 24 | buffer[start + 9] << 16 | buffer[start + 10] << 8 | buffer[start + 11];
+        packet->command = (buffer[start + 12] << 8) | buffer[start + 13];
+        memcpy(packet->data, &buffer[start + 14], expected_length - HEADER_LENGTH);
         packet->len = expected_length - HEADER_LENGTH;
+        *toflush    = start + expected_length;
         return SERIAL_OK;
     } else {     // crc non corretto
         ESP_LOGW(TAG, "Invalid crc: 0x%02X vs 0x%02X", crc_calc(buffer, expected_length), buffer[expected_length - 1]);
         ESP_LOG_BUFFER_HEX(TAG, buffer, expected_length);
-        return -10;
+        *toflush = start + expected_length;
+        return SERIAL_ERROR_WRONG_CRC;
     }
 }
 
@@ -113,8 +167,8 @@ static int serial_build_response(uint8_t *buffer, size_t len, uint32_t dest, uin
     buffer[5]  = dest >> 16;
     buffer[6]  = dest >> 8;
     buffer[7]  = dest;
-    buffer[8] = source >> 24;
-    buffer[9] = source >> 16;
+    buffer[8]  = source >> 24;
+    buffer[9]  = source >> 16;
     buffer[10] = source >> 8;
     buffer[11] = source;
     if (datalen > 0) {
@@ -134,4 +188,15 @@ static uint8_t crc_calc(uint8_t *buffer, size_t len) {
         res = (res + buffer[i]) & 0xFF;
     }
     return (uint8_t)res;
+}
+
+
+static int find_preamble(uint8_t *buffer, size_t len) {
+    for (int i = 0; i < len - 1; i++) {
+        if (buffer[i] == 2 && buffer[i + 1] == 1) {
+            return i;
+        }
+    }
+
+    return -1;
 }

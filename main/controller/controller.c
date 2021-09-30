@@ -23,9 +23,8 @@ void controller_init(model_t *pmodel) {
     storage_init();
 
     if (load_uint32_option(&pmodel->id, ID_KEY)) {
-        pmodel->id = 0;
+        pmodel->id = 0x00000001;
     }
-    pmodel->id = 0x14030103;
     ESP_LOGI(TAG, "Id: %02X", pmodel->id);
 }
 
@@ -57,6 +56,7 @@ void controller_manage_packet(model_t *pmodel) {
                 uint8_t P1      = packet.data[1];
                 uint8_t P2      = packet.data[2];
                 set_rele_multi_pulse(relemap, n_pulse, P1, P2, 0, 0);
+                serial_flush();
                 break;
             }
 
@@ -71,6 +71,7 @@ void controller_manage_packet(model_t *pmodel) {
                 uint8_t p1      = packet.data[4];
                 uint8_t p2      = packet.data[5];
                 set_rele_multi_pulse(relemap, n_pulse, P1, P2, p1, p2);
+                serial_flush();
                 break;
             }
 
@@ -89,7 +90,7 @@ void controller_manage_packet(model_t *pmodel) {
                 break;
         }
         ESP_LOGI(TAG, "Managed Command %04X", packet.command);
-    } else if (res != SERIAL_OK && res != SERIAL_ERROR_NO_BYTES) {
+    } else if (res != SERIAL_OK && res != SERIAL_INCOMPLETE) {
         ESP_LOGW(TAG, "Received invalid packet: %i", res);
     }
 }

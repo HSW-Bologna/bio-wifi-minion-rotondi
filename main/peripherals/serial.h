@@ -15,9 +15,9 @@
 
 typedef enum {
     SERIAL_OK                   = 0,
-    SERIAL_ERROR_NO_BYTES       = -1,
+    SERIAL_INCOMPLETE           = -1,
     SERIAL_ERROR_WRONG_PREAMBLE = -2,
-    SERIAL_ERROR_TOO_FEW_BYTES  = -5,
+    SERIAL_ERROR_WRONG_CRC      = -4,
 } serial_error_t;
 
 typedef struct {
@@ -31,5 +31,6 @@ typedef struct {
 void serial_init(void);
 int  serial_get_packet(serial_packet_t *packet);
 void serial_send_response(serial_packet_t *packet, uint8_t *data, size_t len);
+void serial_flush(void);
 
 #endif
