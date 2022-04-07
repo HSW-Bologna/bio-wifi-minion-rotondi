@@ -5,6 +5,6 @@
 #include "freertos/task.h"
 #include "freertos/timers.h"
 
-#define get_millis() ((uint32_t)xTaskGetTickCount() * portTICK_PERIOD_MS)
+#define get_millis() (xTaskGetTickCount() * portTICK_PERIOD_MS)
 
 #endif
