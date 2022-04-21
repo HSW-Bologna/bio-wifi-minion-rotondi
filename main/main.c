@@ -9,6 +9,8 @@
 #include "peripherals/digout.h"
 #include "peripherals/hardwareprofile.h"
 #include "peripherals/serial.h"
+#include "peripherals/heartbit.h"
+#include "peripherals/rotary_encoder.h"
 
 
 static const char *TAG = "Main";
@@ -16,6 +18,11 @@ static const char *TAG = "Main";
 
 void app_main(void) {
     model_t model;
+
+    heartbit_init(1000UL);
+    rotary_encoder_init();
+
+    ESP_LOGI(TAG, "Encoder: 0x%02X", rotary_encoder_read());
 
     model_init(&model);
     controller_init(&model);
