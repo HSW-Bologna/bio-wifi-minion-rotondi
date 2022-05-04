@@ -1,4 +1,5 @@
 import serial
+import sys
 from time import sleep
 
 READ_INPUT = 0x0101
@@ -29,7 +30,7 @@ def set_output(port, output):
 
 
 def main():
-    port = serial.Serial('/dev/ttyUSB0', baudrate=9600, timeout=0.2)
+    port = serial.Serial(sys.argv[1], baudrate=9600, timeout=0.2)
     read_inputs(port)
     for i in range(4):
         sleep(0.3)
