@@ -18,6 +18,9 @@ static void set_rele_multi_pulse(uint8_t rele, uint8_t n_pulse, uint8_t P1, uint
 
 static const char *TAG = "Controller";
 
+extern uint8_t last_command[];
+extern size_t  last_command_size;
+
 
 void controller_init(model_t *pmodel) {
     storage_init();
@@ -25,6 +28,10 @@ void controller_init(model_t *pmodel) {
     if (load_uint32_option(&pmodel->id, ID_KEY)) {
         pmodel->id = 0x00000001;
     }
+    if (pmodel->id == 0) {
+        pmodel->id = 0x00000001;
+    }
+
     ESP_LOGI(TAG, "Id: %02X", pmodel->id);
 }
 
@@ -33,7 +40,8 @@ void controller_manage_packet(model_t *pmodel) {
     serial_packet_t packet = {0};
     int             res    = serial_get_packet(&packet);
 
-    if (res == SERIAL_OK && packet.dest == pmodel->id) {
+    if (res == SERIAL_OK && ((packet.dest == pmodel->id) || (packet.command == COMMAND_SET_ID))) {
+        // ESP_LOGI(TAG, "%X %X %X %X %i", packet.source, packet.dest, pmodel->id, packet.command, packet.len);
         switch (packet.command) {
             case (COMMAND_READ_INPUT): {
                 uint8_t data = digin_get_inputs();
@@ -80,16 +88,19 @@ void controller_manage_packet(model_t *pmodel) {
                 serial_send_response(&packet, &data, 1);
 
                 uint32_t val = packet.data[0] << 24 | packet.data[1] << 16 | packet.data[2] << 8 | packet.data[3];
-                save_uint32_option(&val, ID_KEY);
-                ESP_LOGI(TAG, "New id: %02X", val);
-                pmodel->id = val;
+                if (val != 0) {
+                    save_uint32_option(&val, ID_KEY);
+                    ESP_LOGI(TAG, "New id: %02X", val);
+                    pmodel->id = val;
+                }
                 break;
             }
 
             default:
                 break;
         }
-        ESP_LOGI(TAG, "Managed Command %04X", packet.command);
+        //ESP_LOGI(TAG, "Managed Command %04X", packet.command);
+        //ESP_LOG_BUFFER_HEX(TAG, last_command, last_command_size);
     } else if (res != SERIAL_OK && res != SERIAL_INCOMPLETE) {
         ESP_LOGW(TAG, "Received invalid packet: %i", res);
     }

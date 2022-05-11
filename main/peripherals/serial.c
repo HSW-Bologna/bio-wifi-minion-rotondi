@@ -38,6 +38,17 @@ static const char *TAG = "Serial";
 
 void serial_init(void) {
     (void)TAG;
+
+    gpio_config_t dere_config = {
+        .intr_type    = GPIO_INTR_DISABLE,
+        .mode         = GPIO_MODE_OUTPUT,
+        .pin_bit_mask = BIT64(SERIAL_DERE),
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .pull_up_en   = GPIO_PULLUP_DISABLE,
+    };
+    gpio_config(&dere_config);
+    gpio_set_level(SERIAL_DERE, 0);
+
     uart_config_t uart_config = {
         .baud_rate           = 9600,
         .data_bits           = UART_DATA_8_BITS,
@@ -50,18 +61,24 @@ void serial_init(void) {
     // Configure UART parameters
     ESP_ERROR_CHECK(uart_param_config(PORTNUM, &uart_config));
 
-    uart_set_pin(PORTNUM, SERIAL_UART_TXD, SERIAL_UART_RXD, SERIAL_DERE, -1);
+    // See https://github.com/espressif/esp-idf/issues/4178
+    // uart_set_pin(PORTNUM, SERIAL_UART_TXD, SERIAL_UART_RXD, SERIAL_DERE, -1);
+    uart_set_pin(PORTNUM, SERIAL_UART_TXD, SERIAL_UART_RXD, -1, -1);
     ESP_ERROR_CHECK(uart_driver_install(PORTNUM, 512, 512, 10, NULL, 0));
     ESP_ERROR_CHECK(uart_set_mode(PORTNUM, UART_MODE_RS485_HALF_DUPLEX));
     ESP_ERROR_CHECK(uart_set_rx_timeout(PORTNUM, ECHO_READ_TOUT));
 }
 
 
+uint8_t last_command[512] = {0};
+size_t  last_command_size = 0;
+
+
 int serial_get_packet(serial_packet_t *packet) {
     size_t available = 0;
     if (packet_index > 0 && is_expired(timestamp, get_millis(), 10)) {
-        ESP_LOGW(TAG, "Timeout");
-        ESP_LOG_BUFFER_HEX(TAG, packet_buffer, packet_index);
+        // ESP_LOGW(TAG, "Timeout");
+        // ESP_LOG_BUFFER_HEX(TAG, packet_buffer, packet_index);
         packet_index = 0;
     }
 
@@ -82,11 +99,20 @@ int serial_get_packet(serial_packet_t *packet) {
         int len = uart_read_bytes(PORTNUM, &packet_buffer[packet_index], available, 0);
         assert(len > 0);
         packet_index += len;
+        if (packet_index >= 15 && 0) {
+            ESP_LOGI(TAG, "Received>");
+            ESP_LOG_BUFFER_HEX(TAG, packet_buffer, packet_index);
+            ESP_LOGI(TAG, "Received<");
+        }
     }
 
     size_t toflush = 0;
     int    res     = serial_parse_command(packet_buffer, packet_index, packet, &toflush);
-    //printf("%zu %zu %zu %i\n", available, packet_index, toflush, res);
+    // printf("%zu %zu %zu %i\n", available, packet_index, toflush, res);
+    if (res == 0) {
+        memcpy(last_command, packet_buffer, packet_index);
+        last_command_size = packet_index;
+    }
 
     if (toflush > 0) {
         memmove(packet_buffer, &packet_buffer[toflush], packet_index - toflush);
@@ -107,7 +133,10 @@ void serial_send_response(serial_packet_t *packet, uint8_t *data, size_t len) {
     uint8_t response[SERIAL_PACKET_MAX_LENGTH] = {0};
     size_t  response_len =
         serial_build_response(response, SERIAL_PACKET_MAX_LENGTH, packet->source, packet->dest, data, len);
+    gpio_set_level(SERIAL_DERE, 1);
     uart_write_bytes(PORTNUM, response, response_len);
+    uart_wait_tx_done(PORTNUM, portMAX_DELAY);
+    gpio_set_level(SERIAL_DERE, 0);
     ESP_LOGV(TAG, "Sent %zu bytes in response", response_len);
 }
 

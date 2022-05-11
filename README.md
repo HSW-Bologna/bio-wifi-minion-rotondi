@@ -1,1 +1,5 @@
-Template for esp32 projects
+# BIO WiFi Minion
+
+## TODO
+
+ - Add read id command

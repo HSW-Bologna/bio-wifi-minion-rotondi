@@ -10,7 +10,7 @@
 #define COMMAND_READ_OUTPUT             0x0102
 #define COMMAND_SET_OUTPUT_SINGLE_PULSE 0x0202
 #define COMMAND_SET_OUTPUT_MULTI_PULSE  0x0203
-#define COMMAND_SET_ID                  0x0003
+#define COMMAND_SET_ID                  0xFF03
 
 
 typedef enum {
