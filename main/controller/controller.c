@@ -7,6 +7,7 @@
 #include "peripherals/digin.h"
 #include "peripherals/digout.h"
 #include "peripherals/hardwareprofile.h"
+#include "config/app_config.h"
 #include "esp_log.h"
 
 
@@ -41,7 +42,7 @@ void controller_manage_packet(model_t *pmodel) {
     int             res    = serial_get_packet(&packet);
 
     if (res == SERIAL_OK && ((packet.dest == pmodel->id) || (packet.command == COMMAND_SET_ID))) {
-        // ESP_LOGI(TAG, "%X %X %X %X %i", packet.source, packet.dest, pmodel->id, packet.command, packet.len);
+        //ESP_LOGI(TAG, "%X %X %X %X %i", packet.source, packet.dest, pmodel->id, packet.command, packet.len);
         switch (packet.command) {
             case (COMMAND_READ_INPUT): {
                 uint8_t data = digin_get_inputs();
@@ -96,11 +97,27 @@ void controller_manage_packet(model_t *pmodel) {
                 break;
             }
 
+            case COMMAND_READ_FW_VERSION: {
+                uint8_t data[4] = {APP_CONFIG_FIRMWARE_VERSION_MAJOR, APP_CONFIG_FIRMWARE_VERSION_MINOR,
+                                   APP_CONFIG_FIRMWARE_VERSION_PATCH, 0};
+                serial_send_response(&packet, data, sizeof(data));
+                break;
+            }
+
+            case COMMAND_SET_OUTPUT: {
+                gpio_num_t gpios[4] = {RELE1, RELE2, RELE3, RELE4};
+                serial_send_response(&packet, NULL, 0);
+                if (packet.len >= 2 && packet.data[0] < 4) {
+                    digout_rele_update(gpios[packet.data[0]], packet.data[1]);
+                }
+                break;
+            }
+
             default:
                 break;
         }
-        //ESP_LOGI(TAG, "Managed Command %04X", packet.command);
-        //ESP_LOG_BUFFER_HEX(TAG, last_command, last_command_size);
+        // ESP_LOGI(TAG, "Managed Command %04X", packet.command);
+        // ESP_LOG_BUFFER_HEX(TAG, last_command, last_command_size);
     } else if (res != SERIAL_OK && res != SERIAL_INCOMPLETE) {
         ESP_LOGW(TAG, "Received invalid packet: %i", res);
     }
