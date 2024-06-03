@@ -31,9 +31,7 @@ void app_main(void) {
     serial_init();
 
     ESP_LOGI(TAG, "Begin main loop");
-    esp_task_wdt_add(NULL);
     for (;;) {
-        esp_task_wdt_reset();
         controller_manage_packet(&model);
     }
 }

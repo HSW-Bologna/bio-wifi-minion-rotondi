@@ -12,6 +12,7 @@
 #define COMMAND_SET_OUTPUT_MULTI_PULSE  0x0203
 #define COMMAND_READ_FW_VERSION         0x400A
 #define COMMAND_SET_ID                  0xFF03
+#define COMMAND_READ_ID                  0xFF04
 #define COMMAND_SET_OUTPUT              0xFF01
 
 

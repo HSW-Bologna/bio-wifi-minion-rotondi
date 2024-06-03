@@ -202,7 +202,7 @@ static int serial_build_response(uint8_t *buffer, size_t len, uint32_t dest, uin
     buffer[11] = source;
     if (datalen > 0) {
         memcpy(&buffer[13], data, datalen);
-        buffer[14] = crc_calc(buffer, len - 1);
+        buffer[13 + datalen] = crc_calc(buffer, len - 1);
     } else {
         buffer[13] = crc_calc(buffer, len - 1);
     }

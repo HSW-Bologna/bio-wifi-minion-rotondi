@@ -41,8 +41,9 @@ void controller_manage_packet(model_t *pmodel) {
     serial_packet_t packet = {0};
     int             res    = serial_get_packet(&packet);
 
-    if (res == SERIAL_OK && ((packet.dest == pmodel->id) || (packet.command == COMMAND_SET_ID))) {
-        //ESP_LOGI(TAG, "%X %X %X %X %i", packet.source, packet.dest, pmodel->id, packet.command, packet.len);
+    if (res == SERIAL_OK &&
+        ((packet.dest == pmodel->id) || (packet.command == COMMAND_SET_ID) || (packet.command == COMMAND_READ_ID))) {
+        // ESP_LOGI(TAG, "%X %X %X %X %i", packet.source, packet.dest, pmodel->id, packet.command, packet.len);
         switch (packet.command) {
             case (COMMAND_READ_INPUT): {
                 uint8_t data = digin_get_inputs();
@@ -97,6 +98,17 @@ void controller_manage_packet(model_t *pmodel) {
                 break;
             }
 
+            case (COMMAND_READ_ID): {
+                uint8_t data[4] = {
+                    (pmodel->id >> 24) & 0xFF,
+                    (pmodel->id >> 16) & 0xFF,
+                    (pmodel->id >> 8) & 0xFF,
+                    pmodel->id & 0xFF,
+                };
+                serial_send_response(&packet, data, sizeof(data));
+                break;
+            }
+
             case COMMAND_READ_FW_VERSION: {
                 uint8_t data[4] = {APP_CONFIG_FIRMWARE_VERSION_MAJOR, APP_CONFIG_FIRMWARE_VERSION_MINOR,
                                    APP_CONFIG_FIRMWARE_VERSION_PATCH, 0};
@@ -126,8 +138,13 @@ void controller_manage_packet(model_t *pmodel) {
 
 static void set_rele_multi_pulse(uint8_t rele, uint8_t n_pulse, uint8_t P1, uint8_t P2, uint8_t p1, uint8_t p2) {
     size_t i;
-    if (n_pulse == 0)
+
+    uint32_t time_up   = (((uint32_t)P1) * 256 + ((uint32_t)P2)) * 100;
+    uint32_t time_down = (((uint32_t)p1) * 256 + ((uint32_t)p2)) * 100;
+
+    if (n_pulse == 0) {
         n_pulse = 1;
+    }
     for (i = 0; i < n_pulse; i++) {
         if (rele & 1) {
             digout_rele_update(RELE1, 1);
@@ -141,8 +158,8 @@ static void set_rele_multi_pulse(uint8_t rele, uint8_t n_pulse, uint8_t P1, uint
         if (rele & 8) {
             digout_rele_update(RELE4, 1);
         }
-        vTaskDelay(pdMS_TO_TICKS((P1 * 256 + P2) * 100));
+        vTaskDelay(pdMS_TO_TICKS(time_up));
         digout_rele_clear_all();
-        vTaskDelay(pdMS_TO_TICKS((p1 * 256 + p2) * 100));
+        vTaskDelay(pdMS_TO_TICKS(time_down));
     }
 }
